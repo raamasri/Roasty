@@ -1,0 +1,509 @@
+Below is a complete, implementation-ready MVP plan for a “RoastBot” you can hand to Claude (or any engineer/agent) to build. It’s written as a spec + task list + prompts + test plan, optimized for a 2–3 week build.
+
+⸻
+
+RoastBot — MVP Spec (v1)
+
+0) One-liner
+
+A consent-based, light-roast group chat bot for group SMS/MMS (Twilio Conversations) and Telegram that replies like a witty friend: playful, not cruel. Users control heat, style, and off-limits topics in real time.
+
+Out of scope for v1: “True” iMessage blue-bubble bot (no public API). A private Mac relay prototype is listed as Phase 2 (optional).
+
+⸻
+
+1) Goals & Non-Goals
+
+Goals (v1):
+	•	Join a Twilio Conversations group (SMS/MMS) or Telegram group and post short, funny “roasts” on triggers.
+	•	Keep it safe by default: opt-in, adjustable heat (0–10), disallow protected-class targeting, easy /pause.
+	•	Sub-5s perceived latency for most responses.
+	•	Admin panel to set group defaults (heat, style, topics).
+	•	Foundational analytics (volume, latency, safety flags).
+
+Non-Goals (v1):
+	•	Blue-bubble iMessage reliability at scale (covered as Phase 2 “Mac relay” experiment).
+	•	Complex memory or long-term personality drift. Keep context to the last ~50 messages + onboarding facts.
+	•	Multi-language humor. English only for v1.
+
+⸻
+
+2) Primary User Stories & Acceptance Criteria
+	1.	Consent & Onboarding
+	•	As a group, we invite RoastBot; it posts a banner explaining the rules and asks for opt-in.
+	•	✅ AC: RoastBot only activates after at least one member types /agree. Provide /rules, /help, /privacy.
+	2.	Light Roast Replies
+	•	As a member, when I tag @RoastBot or say “roast me”, I get a witty, ≤2 sentence reply.
+	•	✅ AC: Response in <5s; never includes disallowed content; respects heat/style.
+	3.	Controls
+	•	As a member, I can adjust behavior: /heat 0-10, /style dad|dry|bestie|gamer, /topics off looks, family, /pause, /resume, /mute @name, /unmute @name.
+	•	✅ AC: Commands acknowledged with confirmation; changes persist for that group.
+	4.	Safety
+	•	As a member, I can report a bad reply with /report <reason>.
+	•	✅ AC: Bot apologizes, logs incident, and reduces heat by 2 for 1 hour (floor at 0).
+	5.	Reliability
+	•	As owner, I can see basic stats: messages processed, avg latency, moderation hits.
+	•	✅ AC: Admin dashboard displays last 24h & 7d metrics.
+
+⸻
+
+3) Channels & Constraints (MVP)
+	•	Channel A (Primary): Twilio Conversations (group SMS/MMS). Good for fast MVP, cross-platform. “Green bubble” on iPhone.
+	•	Channel B (Secondary): Telegram Bot. Excellent bot ergonomics; used for early growth/testing.
+	•	Phase 2 (Experimental): iMessage “Mac Relay” (Mac mini logged into Apple ID; AppleScript/SQLite polling). Optional; brittle; not for scale.
+
+⸻
+
+4) System Architecture (high-level)
+
+Components:
+	•	Gateway (webhooks):
+	•	/twilio/webhook (incoming group messages & events)
+	•	/telegram/webhook
+	•	Router & Policy Engine: decides whether to respond, applies rate limits and “conversation etiquette” (no double-posting, defer during rapid human back-and-forth).
+	•	LLM Service: prompt assembler → model (Claude/GPT-4o/others) → streaming output.
+	•	Safety Layer: pre-filter (inputs), post-filter (candidate output), heat-adjuster & safe fallback.
+	•	State Store:
+	•	Redis: ephemeral context (last 50 msgs), rate limits, per-group runtime state.
+	•	Postgres: groups, participants, settings, consent, audit logs, incidents.
+	•	Delivery Adapters: Twilio Conversations API, Telegram send API.
+	•	Admin UI: small web app (Next.js or SvelteKit) with auth (Clerk/Auth0) to configure per-group defaults and view telemetry.
+	•	Observability: logs, traces, metrics (OpenTelemetry + Grafana/Datadog), error alerts (PagerDuty/Slack).
+
+Suggested stack:
+	•	Backend: Node.js (Express/Fastify) or Python (FastAPI).
+	•	DB: Postgres (Supabase/RDS) + Redis (Upstash/Redis Cloud).
+	•	Deploy: Fly.io/Render/Railway (or AWS Fargate).
+	•	CI/CD: GitHub Actions.
+	•	Secrets: Doppler/1Password/Vault.
+
+⸻
+
+5) Data Model (Postgres)
+
+-- groups & channels
+CREATE TABLE groups (
+  id UUID PRIMARY KEY,
+  channel ENUM('twilio','telegram') NOT NULL,
+  channel_ref TEXT NOT NULL, -- Twilio Conversation SID or Telegram chat_id
+  created_at TIMESTAMP DEFAULT now(),
+  active BOOLEAN DEFAULT true
+);
+
+CREATE TABLE participants (
+  id UUID PRIMARY KEY,
+  group_id UUID REFERENCES groups(id) ON DELETE CASCADE,
+  handle TEXT,           -- phone fragment or telegram username
+  display_name TEXT,
+  role ENUM('member','admin') DEFAULT 'member',
+  consent BOOLEAN DEFAULT false,
+  muted BOOLEAN DEFAULT false,
+  created_at TIMESTAMP DEFAULT now()
+);
+
+CREATE TABLE settings (
+  group_id UUID PRIMARY KEY REFERENCES groups(id) ON DELETE CASCADE,
+  heat INT DEFAULT 5 CHECK (heat BETWEEN 0 AND 10),
+  style TEXT DEFAULT 'bestie', -- 'dad','dry','gamer','bestie'
+  topics_off TEXT[] DEFAULT ARRAY[]::TEXT[], -- e.g. ['looks','family','religion']
+  max_rate_secs INT DEFAULT 45,
+  safe_mode BOOLEAN DEFAULT true
+);
+
+CREATE TABLE messages (
+  id BIGSERIAL PRIMARY KEY,
+  group_id UUID REFERENCES groups(id) ON DELETE CASCADE,
+  participant_id UUID REFERENCES participants(id),
+  channel_msg_id TEXT,
+  text TEXT,
+  created_at TIMESTAMP DEFAULT now()
+);
+
+CREATE TABLE incidents (
+  id BIGSERIAL PRIMARY KEY,
+  group_id UUID REFERENCES groups(id),
+  participant_id UUID REFERENCES participants(id),
+  type TEXT,            -- 'report','moderation_block','fallback'
+  reason TEXT,
+  raw_input JSONB,
+  raw_output JSONB,
+  created_at TIMESTAMP DEFAULT now()
+);
+
+Redis keys (ephemeral):
+	•	ctx:{group_id} → rolling window of last 50 msgs (trim list).
+	•	ratelimit:{group_id} → timestamp of last bot reply.
+	•	cooldown:{group_id} → heat temporarily reduced.
+
+⸻
+
+6) Bot Behavior Logic
+
+Triggers (MVP):
+	•	Explicit mention: @RoastBot, “roast me”, “ratio me”, “clap back”.
+	•	Keyword triggers (configurable): “cope”, “skill issue”, “tell him”.
+	•	Rate limits: max 1 bot reply per 45s per group; never more than 1 reply to the same message.
+
+Etiquette rules:
+	•	If two humans post within 30s swishing back and forth, defer (don’t derail).
+	•	Prefer replying to latest mention; drop if stale (>2 min).
+	•	Length: ≤2 sentences or 240 chars; 1 emoji used 20% of the time.
+
+Memory:
+	•	Keep last 50 msgs in Redis.
+	•	Store up to 3 “fun facts” per participant from onboarding (e.g., hobbies) to fuel callbacks (opt-in only).
+
+⸻
+
+7) Safety & Moderation “Sandwich”
+
+Pre-filter (input):
+	•	If the triggering message contains slurs/hate → do not roast; reply with a gentle boundary + /rules.
+	•	Extract entities: who is being addressed? If a user opted out (muted), skip.
+
+Generation:
+	•	Build prompt with system rules (below), group config (heat, style, topics_off), recent context, and target user’s fun facts.
+
+Post-filter (output):
+	•	Run toxicity/harassment checks (provider of your choice).
+	•	If flagged or contains off-limits topics → regenerate with lower heat; if still flagged → use safe fallback (gentle tease or witty observation with no targets).
+	•	Log incidents and auto-reduce heat for 60 minutes.
+
+User controls:
+	•	/mute @name, /unmute @name, /topics off <t1,t2>, /report <reason>, /pause, /resume.
+
+⸻
+
+8) Prompting (Claude-ready)
+
+System Prompt (v1):
+
+You are RoastBot, a CONSENSUAL, LIGHT-ROAST group chat friend.
+PRINCIPLES:
+- Humor ≠ harm. Be playful, empathetic, and punch UP at situations, not people.
+- NEVER reference protected classes (race, religion, gender, orientation, disability, nationality), body/looks/health, trauma, or private info.
+- Keep replies SHORT: max 2 sentences or 240 chars. Use 1 emoji in ~20% of replies.
+- Respect “topics_off”: {topics_off}. If any roast would violate them, pick a neutral, situational tease instead.
+- Style presets: {style}. Heat level: {heat}/10 (0=wholesome, 10=spicy but still safe).
+- If asked to stop or paused, apologize briefly and stop.
+- If conversation is serious (grief, crisis, personal help), DO NOT roast; respond kindly or stay silent.
+
+FORMAT:
+- Output only the roast text. No preamble, no labels.
+
+Assistant Context Builder (server-side variables):
+	•	style: one of bestie|dad|dry|gamer.
+	•	heat: 0–10.
+	•	topics_off: array (e.g., ["looks","family","work"]).
+	•	recent_context: last ~10 lines with names → short summary bullet list (server-generated) to avoid token bloat.
+
+Few-shot style snippets (append as hidden examples):
+	•	bestie (heat 3): “That fit says ‘board meeting at 9, nap at 9:05.’”
+	•	dad (heat 2): “Proud of you, champ. Now let’s see you answer a text within one fiscal quarter.”
+	•	dry (heat 5): “Bold strategy to bring confidence and zero facts to the same chat.”
+	•	gamer (heat 6): “Skill issue detected. Patch notes say: try logic.”
+
+Fallback Prompt (if safety hits):
+
+Provide a single-sentence, KIND tease that targets a situation or object, not a person.
+No proper names or attributes. Make it witty and wholesome.
+
+
+⸻
+
+9) Command Parser (LLM or Regex)
+
+Commands (recognized anywhere, case-insensitive):
+	•	/agree – opt-in for the group; bot activates.
+	•	/help – list commands.
+	•	/heat 0..10 – set heat.
+	•	/style dad|dry|bestie|gamer
+	•	/topics off <comma list>; /topics on <comma list>
+	•	/pause, /resume
+	•	/mute @name, /unmute @name
+	•	/report <reason>
+	•	/rules, /privacy
+
+Parsing approach:
+	•	Start with regex parser for reliability and speed.
+	•	Optional: add an LLM “command extraction” function if you want natural-language config later.
+
+⸻
+
+10) APIs & Webhooks
+
+Twilio Conversations
+	•	Inbound webhook: POST /twilio/webhook
+	•	Validate Twilio signature.
+	•	Map ConversationSid → groups.channel_ref.
+	•	Extract message author and text; upsert participant.
+	•	Run router → maybe call generateRoast() → POST to Conversations API.
+
+Telegram
+	•	Bot webhook: POST /telegram/webhook
+	•	Validate token.
+	•	Extract chat_id, from.username, text.
+	•	Same router path.
+
+Internal
+	•	POST /admin/groups (create/import)
+	•	GET /admin/groups/:id
+	•	PATCH /admin/groups/:id/settings
+	•	GET /admin/metrics?window=24h
+
+⸻
+
+11) Generation Flow (Pseudo)
+
+async function handleMessage(msg, group) {
+  if (!isConsentOn(group, msg)) return;
+
+  if (!shouldTrigger(msg, group)) return;
+
+  if (isRateLimited(group)) return;
+
+  const inputSafety = preModerate(msg.text);
+  if (inputSafety.block) return replyBoundaries(group);
+
+  const prompt = buildPrompt({
+    style: group.settings.style,
+    heat: adjustedHeat(group),
+    topics_off: group.settings.topics_off,
+    context: summarizeContext(group.id),
+    target: resolveTarget(msg)
+  });
+
+  let out = await llm.generate(prompt, {max_tokens: 80, temperature: mapHeatToTemp(heat)});
+  let post = postModerate(out);
+
+  if (post.block) {
+    // reduce heat and regenerate once
+    const coolerPrompt = lowerHeat(prompt);
+    out = await llm.generate(coolerPrompt);
+    post = postModerate(out);
+    if (post.block) out = await safeFallback();
+    logIncident(group, msg, post.reason, out);
+  }
+
+  deliver(group, out);
+  setRateLimit(group);
+}
+
+Heat → Temperature mapping (suggestion):
+	•	heat 0–2 → temp 0.5
+	•	heat 3–5 → temp 0.8
+	•	heat 6–8 → temp 1.0
+	•	heat 9–10 → temp 1.1 (still respect guardrails)
+
+⸻
+
+12) Admin UI (MVP)
+	•	Auth: Clerk/Auth0
+	•	Views:
+	•	Groups list: channel, created_at, active
+	•	Group detail: heat slider, style select, topics chips, pause toggle
+	•	Metrics: messages/day, avg latency, % moderated, incidents table
+	•	No PII beyond display names/handles.
+
+⸻
+
+13) Deployment & DevOps
+	•	Environments: dev, prod.
+	•	Infrastructure:
+	•	API: Fly.io (2 regions) or Railway (1 shared), auto-scaling.
+	•	Postgres: Supabase/RDS (low tier).
+	•	Redis: Upstash free/low tier.
+	•	CI: GitHub Actions (lint, test, deploy).
+	•	Secrets: Doppler or environment-specific secrets store.
+	•	Alerting: healthcheck endpoint + uptime monitor; error logs → Slack.
+
+⸻
+
+14) Costs (MVP ballpark, monthly)
+	•	Twilio Conversations: ~$0.005–$0.01 per msg (varies by country/media).
+	•	Telegram: $0.
+	•	LLM: $50–$300 depending on usage (start with GPT-4o-mini/Claude and cap).
+	•	Infra (low-tier): $20–$60.
+Total: $100–$500 early.
+
+⸻
+
+15) Build Timeline (2–3 weeks)
+
+Week 1
+	•	Day 1–2: Repo scaffolding, DB/Redis, Twilio webhook → echo bot.
+	•	Day 3–4: Router rules, rate limit, consent flow, command parser.
+	•	Day 5: LLM integration + moderation sandwich; style/heat mapping; basic admin UI.
+
+Week 2
+	•	Day 6–7: Telegram adapter; shared behavior core; analytics logging.
+	•	Day 8–9: Safety fallbacks, incidents log, /report, /mute, /topics.
+	•	Day 10: Latency tuning, streaming, load test against 3–5 active groups.
+
+Week 3
+	•	Day 11–12: Admin UI polish, privacy copy, /rules, /help messages.
+	•	Day 13: Red-team tests, safety thresholds, seed content.
+	•	Day 14: Private beta with 3 friend groups; fix paper cuts; prepare Phase 2 spike (Mac relay) if desired.
+
+⸻
+
+16) QA & Red-Team Test Plan
+
+Functional tests
+	•	Consent: no replies before /agree.
+	•	Commands: all permutations; invalid inputs return helpful usage.
+	•	Rate limiting: rapid-fire triggers produce at most 1 reply/45s.
+	•	Context: replies reference only recent, safe context.
+
+Safety tests
+	•	Hate speech, slurs → block + boundary message.
+	•	Sensitive topics present → fallback.
+	•	Personal attacks without consent → blocked.
+	•	Dramatic/serious conversation detected → no roast (respond kind or silent).
+
+Style/heat
+	•	Heat 0: pure wholesome banter.
+	•	Heat 10: spicy but still clean; no protected classes; no looks/health if off.
+
+Load/latency
+	•	200 msgs/min total across groups; p95 latency <5s.
+
+⸻
+
+17) Privacy & Policy (MVP copy suggestions)
+	•	“RoastBot is opt-in. We store basic group settings, recent messages for context, and incident logs for 30 days; we never sell data. You can wipe your group at any time with /delete (admin only).”
+	•	“No medical/legal advice; no harassment; no doxxing. Protected classes and looks/body comments are off-limits by default.”
+	•	“Type /pause to stop or /report for issues.”
+
+⸻
+
+18) Observability & Metrics
+	•	Core: messages received, replies sent, moderation blocks, fallback usage.
+	•	Latency: p50/p95 from receive → reply.
+	•	Safety: toxicity score histogram, incidents/day.
+	•	Engagement: unique groups active/day, commands used, heat distribution.
+
+⸻
+
+19) Risks & Mitigations
+	•	Carrier quirks (MMS delays): keep Telegram channel live for testing; show “thinking…” only on Telegram (not SMS).
+	•	Over-blocking by safety model: maintain adjustable thresholds; human review mode for early beta.
+	•	Prompt drift: lock system prompt; use regression tests on a fixed conversation set.
+	•	iMessage demand: clearly label Mac relay as experimental; invite-only.
+
+⸻
+
+20) Phase 2 (Optional) — iMessage “Mac Relay” Spike
+	•	Goal: Run a daemon on a Mac (mini or your machine) that monitors the Messages DB / AppleScript events to read incoming group messages and send replies as a real Apple ID.
+	•	Notes: private use only; OS updates can break it; not productized.
+
+⸻
+
+Appendices (copy-paste friendly for Claude)
+
+A) Intent & Trigger Classifier (Lightweight, rules > model)
+	•	If text contains @roastbot OR regex \broast me\b|\bratio me\b|\bclap back\b → trigger.
+	•	If group cooldown active, reduce heat by 2 (min 0).
+	•	Drop if last bot reply <45s ago.
+
+B) “House Style” Prompt Snippets
+
+Style → Tone guardrails
+	•	bestie: warm teasing, pop culture references, affectionate nicknames (sparingly).
+	•	dad: gentle sarcasm, “proud of you” jokes, corny analogies.
+	•	dry: deadpan, concise, observational.
+	•	gamer: playful competitiveness, game metaphors, zero toxicity.
+
+Do/Don’t examples (give Claude as few-shot):
+	•	✅ “Scheduling skills so advanced you booked a meeting with the void.”
+	•	✅ “That take did a speedrun any% past the evidence.”
+	•	❌ “Comments about looks, weight, health, ethnicity, religion, sexuality.”
+	•	❌ “Threats, slurs, sexual content.”
+
+C) Safety Fallback Library (single-liners)
+	•	“I would roast you, but your calendar already did.”
+	•	“Confidence patch installed. Release notes pending.”
+	•	“Let’s file that take under ‘beta features’ for now.”
+	•	“Bold of you to bring vibes and no data.”
+
+D) Seed /help Copy
+
+RoastBot commands:
+- /agree – turn me on in this group
+- /heat 0..10 – how spicy the roasts are (default 5)
+- /style dad|dry|bestie|gamer – pick a vibe
+- /topics off <t1,t2> – e.g., /topics off looks,family
+- /mute @name, /unmute @name – stop/start roasting someone
+- /pause, /resume – stop/start all roasts
+- /report <reason> – flag a reply and I’ll chill
+- /rules, /privacy – see boundaries & policy
+
+E) Red-Team Conversation Set (for regression)
+
+Create a JSON file with 50 scripted group snippets covering:
+	•	Banter triggers, serious conversation, edgy bait, command mis-spells, spam bursts.
+	•	For each, expected output category: “roast ok”, “fallback”, “no reply”, “apology”.
+
+F) Minimal Tech Tasks for Claude (checklist)
+	1.	Project Setup
+	•	Repo init; TypeScript Node + Express; ESLint/Prettier; OpenTelemetry.
+	•	Dockerfile; GitHub Actions (build/test).
+	2.	DB & Redis
+	•	Postgres schema migration; Prisma/Knex.
+	•	Redis lists for ctx:{group} (capped 50) and rate-limits.
+	3.	Twilio Adapter
+	•	Webhook endpoint; signature validation; echo test; send API wrapper.
+	4.	Telegram Adapter
+	•	Webhook endpoint; message extractor; send wrapper.
+	5.	Router & Commands
+	•	Regex parser; consent state; rate limit; etiquette rules.
+	6.	LLM & Moderation
+	•	Claude/GPT client; system prompt builder; heat→temp map; safety pre/post.
+	•	Fallback generator; incident logger.
+	7.	Admin UI
+	•	Minimal Next.js page: login, group list/detail, sliders & toggles, metrics.
+	8.	Metrics & Alerts
+	•	Counters, histograms; health check; Slack alert on 5xx burst.
+	9.	Docs
+	•	README: setup, env vars, Twilio config, Telegram bot config.
+	•	Privacy/rules markdown.
+
+⸻
+
+G) Environment Variables (example)
+
+PORT=8080
+NODE_ENV=production
+DATABASE_URL=postgres://...
+REDIS_URL=redis://...
+TWILIO_ACCOUNT_SID=...
+TWILIO_AUTH_TOKEN=...
+TWILIO_CONVERSATION_SID=... (if using a seeded conversation)
+TELEGRAM_BOT_TOKEN=...
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=...
+OPENAI_API_KEY=... (optional)
+SAFETY_PROVIDER=openai|azure|none
+
+
+⸻
+
+H) Latency Targets
+	•	Webhook ingest → policy decision: <50 ms
+	•	LLM first token: <1.5 s (Claude/GPT streaming)
+	•	Post-filter + send: <500 ms
+	•	p95 end-to-end: <5 s
+
+⸻
+
+Hand-off Notes
+	•	Start with Telegram for frictionless dev testing; then add Twilio Conversations.
+	•	Keep heat default = 5, style = bestie, topics_off = ["looks","family","religion","politics","health"].
+	•	Add a “panic safe mode” feature flag to drop heat to 2 globally if moderation hits >5% in last hour.
+
+If you want, I can also generate:
+	•	A starter repo structure (folders, placeholder files).
+	•	The exact system prompt JSON + a few-shot set.
+	•	A Twilio Conversations Postman collection.
+
+Tell me your preferred stack (Node vs Python) and I’ll tailor the scaffolding.

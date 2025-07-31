@@ -1,0 +1,38 @@
+{
+  "name": "roastbot",
+  "version": "1.0.0",
+  "description": "A consent-based light-roast SMS bot",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "start": "node dist/index.js",
+    "lint": "eslint src/**/*.ts",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.24.3",
+    "axios": "^1.11.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "helmet": "^7.1.0",
+    "openai": "^4.104.0",
+    "pg": "^8.11.3",
+    "redis": "^4.6.10",
+    "twilio": "^4.19.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/jest": "^29.5.8",
+    "@types/node": "^20.9.0",
+    "@types/pg": "^8.10.7",
+    "@typescript-eslint/eslint-plugin": "^6.11.0",
+    "@typescript-eslint/parser": "^6.11.0",
+    "eslint": "^8.53.0",
+    "jest": "^29.7.0",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.2.2"
+  }
+}
