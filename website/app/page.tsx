@@ -6,7 +6,6 @@ import Hero from '@/components/Hero'
 import Features from '@/components/Features'
 import Demo from '@/components/Demo'
 import HowItWorks from '@/components/HowItWorks'
-import GitHub from '@/components/GitHub'
 import Footer from '@/components/Footer'
 
 export default function Home() {
@@ -17,7 +16,6 @@ export default function Home() {
       <Features />
       <Demo />
       <HowItWorks />
-      <GitHub />
       <Footer />
     </main>
   )

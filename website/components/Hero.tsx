@@ -5,7 +5,7 @@ export default function Hero() {
         <div className="mb-8">
           <div className="text-8xl mb-6">🤖🔥</div>
           <h1 className="text-5xl md:text-7xl font-bold mb-6">
-            <span className="gradient-text glow-text">RoastBot</span>
+            <span className="gradient-text glow-text">Roasty</span>
           </h1>
           <p className="text-xl md:text-2xl text-gray-300 mb-8 max-w-3xl mx-auto">
             The AI-powered SMS bot that learns your personality and delivers 
@@ -24,17 +24,16 @@ export default function Hero() {
 
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
           <a 
-            href="#demo" 
+            href="sms:+18777804236&body=roast me" 
             className="bg-roast-orange text-white px-8 py-4 rounded-lg text-lg font-semibold hover:bg-roast-red transition-colors glow"
           >
-            Try Demo
+            🔥 Start Roasting
           </a>
           <a 
-            href="https://github.com/raamasri/Roasty" 
-            target="_blank"
+            href="#demo" 
             className="border border-roast-orange text-roast-orange px-8 py-4 rounded-lg text-lg font-semibold hover:bg-roast-orange hover:text-white transition-colors"
           >
-            View Source Code
+            👀 See Demo
           </a>
         </div>
 

@@ -5,7 +5,7 @@ export default function Header() {
         <nav className="flex items-center justify-between">
           <div className="flex items-center space-x-2">
             <div className="text-2xl">🤖🔥</div>
-            <h1 className="text-xl font-bold gradient-text">RoastBot</h1>
+            <h1 className="text-xl font-bold gradient-text">Roasty</h1>
           </div>
           
           <div className="hidden md:flex items-center space-x-8">
@@ -15,15 +15,14 @@ export default function Header() {
             <a href="#demo" className="text-gray-300 hover:text-roast-orange transition-colors">
               Demo
             </a>
-            <a href="#github" className="text-gray-300 hover:text-roast-orange transition-colors">
-              GitHub
+            <a href="#how-it-works" className="text-gray-300 hover:text-roast-orange transition-colors">
+              How It Works
             </a>
             <a 
-              href="https://github.com/raamasri/Roasty" 
-              target="_blank"
+              href="#demo" 
               className="bg-roast-orange text-white px-4 py-2 rounded-lg hover:bg-roast-red transition-colors glow"
             >
-              View Code
+              Try Now
             </a>
           </div>
 

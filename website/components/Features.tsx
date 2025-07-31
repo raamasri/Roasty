@@ -84,16 +84,23 @@ export default function Features() {
 
         <div className="mt-16 text-center">
           <div className="code-block rounded-lg p-6 max-w-4xl mx-auto">
-            <h3 className="text-xl font-semibold text-roast-orange mb-4">Tech Stack</h3>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm font-mono">
-              <div className="text-blue-400">TypeScript</div>
-              <div className="text-green-400">Node.js</div>
-              <div className="text-purple-400">Express</div>
-              <div className="text-yellow-400">PostgreSQL</div>
-              <div className="text-red-400">Redis</div>
-              <div className="text-cyan-400">Claude AI</div>
-              <div className="text-orange-400">Twilio</div>
-              <div className="text-pink-400">Next.js</div>
+            <h3 className="text-xl font-semibold text-roast-orange mb-4">Ready to Get Roasted?</h3>
+            <p className="text-gray-300 mb-6">
+              Join thousands of users getting personalized AI roasts via SMS
+            </p>
+            <div className="flex flex-col sm:flex-row gap-4 justify-center">
+              <a 
+                href="sms:+18777804236&body=roast me" 
+                className="bg-roast-orange text-white px-8 py-4 rounded-lg text-lg font-semibold hover:bg-roast-red transition-colors glow"
+              >
+                🔥 Start Roasting Now
+              </a>
+              <a 
+                href="#demo" 
+                className="border border-roast-orange text-roast-orange px-8 py-4 rounded-lg text-lg font-semibold hover:bg-roast-orange hover:text-white transition-colors"
+              >
+                👀 See Demo First
+              </a>
             </div>
           </div>
         </div>
