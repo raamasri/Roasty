@@ -134,6 +134,10 @@ export default function Demo() {
                 <span className="text-roast-orange">📱 +1 (877) 780-4236</span>
               </div>
             </div>
+            <p className="text-xs text-gray-500 mt-4 max-w-md mx-auto text-center">
+              By texting Roasty, you agree to our <a href="/opt-in-policy" className="text-roast-orange hover:underline">Opt-In Policy</a> and <a href="/terms" className="text-roast-orange hover:underline">Terms</a>. 
+              Ages 13+. Message rates may apply.
+            </p>
           </div>
         </div>
       </div>

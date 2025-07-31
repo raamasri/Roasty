@@ -45,29 +45,29 @@ export default function Footer() {
             </ul>
           </div>
 
-          {/* Tech */}
+          {/* Legal */}
           <div>
-            <h4 className="text-lg font-semibold text-white mb-4">Built With</h4>
+            <h4 className="text-lg font-semibold text-white mb-4">Legal</h4>
             <ul className="space-y-2">
               <li>
-                <a href="https://www.anthropic.com/claude" target="_blank" className="text-gray-400 hover:text-roast-orange transition-colors">
-                  Claude AI
+                <a href="/opt-in-policy" className="text-gray-400 hover:text-roast-orange transition-colors">
+                  Opt-In Policy
                 </a>
               </li>
               <li>
-                <a href="https://www.twilio.com" target="_blank" className="text-gray-400 hover:text-roast-orange transition-colors">
-                  Twilio SMS
+                <a href="/privacy-policy" className="text-gray-400 hover:text-roast-orange transition-colors">
+                  Privacy Policy
                 </a>
               </li>
               <li>
-                <a href="https://nodejs.org" target="_blank" className="text-gray-400 hover:text-roast-orange transition-colors">
-                  Node.js
+                <a href="/terms" className="text-gray-400 hover:text-roast-orange transition-colors">
+                  Terms of Service
                 </a>
               </li>
               <li>
-                <a href="https://www.postgresql.org" target="_blank" className="text-gray-400 hover:text-roast-orange transition-colors">
-                  PostgreSQL
-                </a>
+                <span className="text-gray-400 text-sm">
+                  Ages 13+
+                </span>
               </li>
             </ul>
           </div>
